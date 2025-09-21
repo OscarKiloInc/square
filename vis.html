@@ -227,6 +227,69 @@
       point.y = Math.min(Math.max(point.y, 0), 1);
     }
 
+    /**
+     * Finds the orientation of the ordered triplet (p, q, r).
+     * @returns 0 --> p, q and r are collinear
+     * @returns 1 --> Clockwise
+     * @returns 2 --> Counterclockwise
+     */
+    function getOrientation(p, q, r) {
+      const val = (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
+      if (Math.abs(val) < 0.00001) return 0; // Use a small epsilon for float comparison
+      return (val > 0) ? 1 : 2; // Clockwise or Counterclockwise
+    }
+
+    /**
+     * Checks if line segment 'p1q1' and 'p2q2' intersect.
+     */
+    function segmentsIntersect(p1, q1, p2, q2) {
+      // Find the four orientations needed for the general and special cases
+      const o1 = getOrientation(p1, q1, p2);
+      const o2 = getOrientation(p1, q1, q2);
+      const o3 = getOrientation(p2, q2, p1);
+      const o4 = getOrientation(p2, q2, q1);
+    
+      // General case: If the orientations change, they must cross.
+      if (o1 !== o2 && o3 !== o4) {
+        return true;
+      }
+    
+      // We are not handling the special collinear cases for this implementation,
+      // as the general case is sufficient for preventing obvious self-intersections.
+      
+      return false;
+    }
+
+    /**
+     * Checks if the entire polygon is valid (i.e., does not self-intersect).
+     * @param {THREE.Vector2[]} poly - The array of vertices representing the polygon.
+     */
+    function isPolygonValid(poly) {
+      const n = poly.length;
+      if (n <= 3) return true; // Triangles can't self-intersect
+    
+      for (let i = 0; i < n; i++) {
+        // The first edge is from point i to i+1
+        const p1 = poly[i];
+        const q1 = poly[(i + 1) % n]; // Use modulo for wraparound
+    
+        // Check this edge against all other non-adjacent edges
+        for (let j = i + 2; j < n; j++) {
+          // Skip adjacent edges
+          if ((j + 1) % n === i) continue;
+    
+          const p2 = poly[j];
+          const q2 = poly[(j + 1) % n];
+    
+          if (segmentsIntersect(p1, q1, p2, q2)) {
+            return false; // Found an intersection
+          }
+        }
+      }
+
+      return true; // No intersections found
+    }
+
     canvas.addEventListener('pointerdown', (event) => {
       canvas.setPointerCapture(event.pointerId);
       const pos = getPointerPosition(event);
@@ -247,9 +310,25 @@
       }
       const pos = getPointerPosition(event);
       clampPoint(pos);
-      polygon[selectedVertexIndex].copy(pos);
-      vertexMeshes[selectedVertexIndex].position.set(pos.x, pos.y, 0);
-      updateLine();
+    
+      // --- VALIDATION LOGIC START ---
+    
+      // 1. Create a temporary copy of the polygon to test the move.
+      const tempPolygon = polygon.map(p => p.clone());
+    
+      // 2. Apply the proposed move to the temporary polygon.
+      tempPolygon[selectedVertexIndex].copy(pos);
+    
+      // 3. Check if the new shape would be valid.
+      if (isPolygonValid(tempPolygon)) {
+        // 4. If valid, apply the changes to the real polygon and update visuals.
+        polygon[selectedVertexIndex].copy(pos);
+        vertexMeshes[selectedVertexIndex].position.set(pos.x, pos.y, 0);
+        updateLine();
+      }
+      // --- VALIDATION LOGIC END ---
+      
+      // If not valid, we simply do nothing, and the vertex remains in its last valid position.
     });
 
     function endDrag(event) {
