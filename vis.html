@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Polygon Visualizer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r152/three.min.js" integrity="sha512-4yNy2iH6mUE7UVrFfvZDYaUJ6UZT5pif2Y+lo+2AI8U1nQa3IaxGc6EnxBsLNc2nhn09pnO8yufjqCLVFBBqyg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at top, #f5f7fb, #d7dce5);
+      color: #1f2933;
+    }
+
+    .wrapper {
+      text-align: center;
+      padding: 1.5rem;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.85);
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.15);
+      backdrop-filter: blur(10px);
+    }
+
+    h1 {
+      margin-top: 0;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    .canvas-container {
+      position: relative;
+      margin: 1rem auto;
+      width: min(600px, 70vw);
+      aspect-ratio: 1 / 1;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+      background: #101827;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: crosshair;
+    }
+
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    button {
+      padding: 0.6rem 1.4rem;
+      border-radius: 999px;
+      border: none;
+      background: linear-gradient(135deg, #2563eb, #38bdf8);
+      color: white;
+      font-size: 1rem;
+      letter-spacing: 0.03em;
+      box-shadow: 0 10px 20px rgba(59, 130, 246, 0.25);
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 16px 30px rgba(59, 130, 246, 0.35);
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    .hint {
+      margin: 0;
+      max-width: 420px;
+      font-size: 0.9rem;
+      color: #475569;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <h1>Polygon Playground</h1>
+    <div class="canvas-container">
+      <canvas id="vis-canvas"></canvas>
+    </div>
+    <div class="controls">
+      <button id="delete-vertex">Delete Selected Vertex</button>
+      <p class="hint">Drag a vertex to move it. Click an edge to create a new vertex. Click a vertex and press delete to remove it.</p>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('vis-canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0f172a);
+
+    const camera = new THREE.OrthographicCamera(0, 1, 1, 0, -10, 10);
+    camera.position.set(0, 0, 5);
+    camera.lookAt(new THREE.Vector3(0, 0, 0));
+
+    const polygon = [
+      new THREE.Vector2(0.25, 0.25),
+      new THREE.Vector2(0.75, 0.25),
+      new THREE.Vector2(0.75, 0.75),
+      new THREE.Vector2(0.25, 0.75)
+    ];
+
+    const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
+    const lineGeometry = new THREE.BufferGeometry();
+    const line = new THREE.LineLoop(lineGeometry, lineMaterial);
+    scene.add(line);
+
+    const vertexGeometry = new THREE.CircleGeometry(0.015, 24);
+    const baseColor = new THREE.Color(0x3b82f6);
+    const highlightColor = new THREE.Color(0xf97316);
+    const vertexMeshes = [];
+
+    let selectedVertexIndex = null;
+    let isDragging = false;
+
+    function updateRendererSize() {
+      const { width, height } = canvas.parentElement.getBoundingClientRect();
+      const size = Math.min(width, height);
+      renderer.setSize(size, size, false);
+    }
+
+    function updateLine() {
+      const points3 = polygon.map((p) => new THREE.Vector3(p.x, p.y, 0));
+      line.geometry.setFromPoints(points3);
+    }
+
+    function rebuildVertices() {
+      // Remove extra meshes if polygon shrank
+      while (vertexMeshes.length > polygon.length) {
+        const mesh = vertexMeshes.pop();
+        scene.remove(mesh);
+      }
+      // Add missing meshes if polygon grew
+      while (vertexMeshes.length < polygon.length) {
+        const mesh = new THREE.Mesh(vertexGeometry, new THREE.MeshBasicMaterial({ color: baseColor }));
+        mesh.renderOrder = 1;
+        vertexMeshes.push(mesh);
+        scene.add(mesh);
+      }
+      // Update positions and materials
+      vertexMeshes.forEach((mesh, index) => {
+        const point = polygon[index];
+        mesh.position.set(point.x, point.y, 0);
+        mesh.material.color.copy(index === selectedVertexIndex ? highlightColor : baseColor);
+        const scale = index === selectedVertexIndex ? 1.4 : 1.0;
+        mesh.scale.set(scale, scale, 1);
+      });
+    }
+
+    function setSelectedVertex(index) {
+      selectedVertexIndex = index;
+      rebuildVertices();
+    }
+
+    function getPointerPosition(event) {
+      const rect = canvas.getBoundingClientRect();
+      const x = (event.clientX - rect.left) / rect.width;
+      const y = 1 - (event.clientY - rect.top) / rect.height;
+      return new THREE.Vector2(x, y);
+    }
+
+    function distanceToSegment(point, a, b) {
+      const ab = new THREE.Vector2().subVectors(b, a);
+      const ap = new THREE.Vector2().subVectors(point, a);
+      const t = Math.max(0, Math.min(1, ap.dot(ab) / ab.lengthSq()));
+      const closest = new THREE.Vector2().copy(a).add(ab.multiplyScalar(t));
+      return closest.distanceTo(point);
+    }
+
+    function trySelectVertex(pos) {
+      const threshold = 0.03;
+      let closestIndex = null;
+      let closestDistance = Infinity;
+      polygon.forEach((vertex, index) => {
+        const d = vertex.distanceTo(pos);
+        if (d < threshold && d < closestDistance) {
+          closestDistance = d;
+          closestIndex = index;
+        }
+      });
+      if (closestIndex !== null) {
+        setSelectedVertex(closestIndex);
+        return true;
+      }
+      return false;
+    }
+
+    function tryInsertVertexOnEdge(pos) {
+      const threshold = 0.02;
+      for (let i = 0; i < polygon.length; i += 1) {
+        const nextIndex = (i + 1) % polygon.length;
+        const dist = distanceToSegment(pos, polygon[i], polygon[nextIndex]);
+        if (dist < threshold) {
+          polygon.splice(nextIndex, 0, pos.clone());
+          setSelectedVertex(nextIndex);
+          rebuildVertices();
+          updateLine();
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function clampPoint(point) {
+      point.x = Math.min(Math.max(point.x, 0), 1);
+      point.y = Math.min(Math.max(point.y, 0), 1);
+    }
+
+    canvas.addEventListener('pointerdown', (event) => {
+      canvas.setPointerCapture(event.pointerId);
+      const pos = getPointerPosition(event);
+      if (trySelectVertex(pos)) {
+        isDragging = true;
+        return;
+      }
+      if (tryInsertVertexOnEdge(pos)) {
+        isDragging = true;
+        return;
+      }
+      setSelectedVertex(null);
+    });
+
+    canvas.addEventListener('pointermove', (event) => {
+      if (!isDragging || selectedVertexIndex === null) {
+        return;
+      }
+      const pos = getPointerPosition(event);
+      clampPoint(pos);
+      polygon[selectedVertexIndex].copy(pos);
+      vertexMeshes[selectedVertexIndex].position.set(pos.x, pos.y, 0);
+      updateLine();
+    });
+
+    function endDrag(event) {
+      if (event) {
+        canvas.releasePointerCapture(event.pointerId);
+      }
+      isDragging = false;
+    }
+
+    canvas.addEventListener('pointerup', endDrag);
+    canvas.addEventListener('pointerleave', endDrag);
+
+    document.getElementById('delete-vertex').addEventListener('click', () => {
+      if (selectedVertexIndex === null || polygon.length <= 2) {
+        return;
+      }
+      polygon.splice(selectedVertexIndex, 1);
+      const mesh = vertexMeshes.splice(selectedVertexIndex, 1)[0];
+      scene.remove(mesh);
+      selectedVertexIndex = null;
+      rebuildVertices();
+      updateLine();
+    });
+
+    function renderLoop() {
+      renderer.render(scene, camera);
+    }
+
+    renderer.setAnimationLoop(renderLoop);
+
+    updateLine();
+    rebuildVertices();
+    updateRendererSize();
+
+    window.addEventListener('resize', () => {
+      updateRendererSize();
+    });
+  </script>
+</body>
+</html>
