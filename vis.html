@@ -408,8 +408,7 @@
       const y = 1 - (event.clientY - rect.top) / rect.height;
       return new THREE.Vector2(x, y);
     }
-    // ... (rest of the interaction and validation functions)
-
+    
     function trySelectVertex(pos) {
       const threshold = 0.03;
       let closestIndex = null;
@@ -422,7 +421,7 @@
         }
       });
       if (closestIndex !== null) {
-        selectedVertexIndex = index;
+        selectedVertexIndex = closestIndex;
         rebuildVertices();
         return true;
       }
