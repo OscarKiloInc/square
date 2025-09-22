@@ -69,6 +69,11 @@
       align-items: center;
       justify-content: center;
     }
+    
+    #da-canvas {
+      border-radius: 16px;
+      overflow: hidden;
+    }
 
     .axis-label {
       position: absolute;
@@ -84,10 +89,6 @@
 
     .axis-label.x-axis {
       bottom: -2rem;
-    }
-
-    #da-canvas {
-      border: 1px solid #d1d5db;
     }
 
     .crosshair {
@@ -186,14 +187,11 @@
     const canvas = document.getElementById('vis-canvas');
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
-
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0f172a);
-
     const camera = new THREE.OrthographicCamera(0, 1, 1, 0, -10, 10);
     camera.position.set(0, 0, 5);
     camera.lookAt(new THREE.Vector3(0, 0, 0));
-
     const backgroundPlane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1));
     backgroundPlane.position.set(0.5, 0.5, -1);
     backgroundPlane.renderOrder = -1;
@@ -212,32 +210,26 @@
 
     // --- Chord and Square Visualization Setup ---
     const chordMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 });
-    const chordGeometry = new THREE.BufferGeometry();
-    const chordLine = new THREE.Line(chordGeometry, chordMaterial);
+    const chordLine = new THREE.Line(new THREE.BufferGeometry(), chordMaterial);
     chordLine.visible = false;
     scene.add(chordLine);
 
     const squareMaterial = new THREE.LineBasicMaterial({
-      color: 0xff0000,
-      transparent: true,
-      opacity: 0.5
+      color: 0xff0000, transparent: true, opacity: 0.5
     });
-    const squareGeometry = new THREE.BufferGeometry();
-    const squareLine = new THREE.LineLoop(squareGeometry, squareMaterial);
+    const squareLine = new THREE.LineLoop(new THREE.BufferGeometry(), squareMaterial);
     squareLine.visible = false;
     scene.add(squareLine);
 
     const otherVertexGeometry = new THREE.RingGeometry(0.008, 0.012, 24);
     const otherVertexMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      side: THREE.DoubleSide
+      color: 0xffffff, side: THREE.DoubleSide
     });
     const squareVertexB_mesh = new THREE.Mesh(otherVertexGeometry, otherVertexMaterial);
     const squareVertexD_mesh = new THREE.Mesh(otherVertexGeometry, otherVertexMaterial);
     squareVertexB_mesh.visible = false;
     squareVertexD_mesh.visible = false;
     scene.add(squareVertexB_mesh, squareVertexD_mesh);
-
 
     const vertexGeometry = new THREE.CircleGeometry(0.015, 24);
     const baseColor = new THREE.Color(0x3b82f6);
@@ -255,8 +247,8 @@
       void main() {
         v_uv = uv;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `;
+      }`;
+
     const fragmentShader = `
       varying vec2 v_uv;
       uniform vec2 u_polygon[${MAX_VERTICES}];
@@ -281,7 +273,6 @@
           vec2 p2 = poly[int(mod(float(i) + 1.0, float(count)))];
           minDst = min(minDst, distanceToSegment(p, p1, p2));
         }
-        
 	      const float PI = 3.1415926535;
         float totalAngle = 0.0;
         for (int i = 0; i < ${MAX_VERTICES}; ++i) {
@@ -309,8 +300,7 @@
           finalColor = mix(u_colorBoundary, u_colorInside, t);
         }
         gl_FragColor = vec4(finalColor, 1.0);
-      }
-    `;
+      }`;
 
     const shaderMaterial = new THREE.ShaderMaterial({
       vertexShader, fragmentShader,
@@ -321,11 +311,116 @@
         u_colorOutside: { value: new THREE.Color(0xffa500) },
         u_colorBoundary: { value: new THREE.Color(0xffffff) },
         u_rangeInside: { value: 0.10 },
-        u_rangeOutside: { value: 0.20 },
+        u_rangeOutside: { value: 0.10 },
       }
     });
     backgroundPlane.material = shaderMaterial;
 
+    // --- DA Plot Visualization Setup ---
+    const daCanvas = document.getElementById('da-canvas');
+    const daRenderer = new THREE.WebGLRenderer({ canvas: daCanvas, antialias: true });
+    daRenderer.setPixelRatio(window.devicePixelRatio);
+    const daScene = new THREE.Scene();
+    const daCamera = new THREE.OrthographicCamera(0, 1, 1, 0, -1, 1);
+    const daPlane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1));
+    daPlane.position.set(0.5, 0.5, 0);
+    daScene.add(daPlane);
+
+    const daFragmentShader = `
+      varying vec2 v_uv;
+      uniform vec2 u_polygon[${MAX_VERTICES}];
+      uniform int u_vertexCount;
+      uniform float u_segmentLengths[${MAX_VERTICES}];
+      uniform float u_totalPerimeter;
+
+      float distanceToSegment(vec2 p, vec2 a, vec2 b) {
+        vec2 ab = b - a; vec2 ap = p - a;
+        float t = clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0);
+        return distance(p, a + t * ab);
+      }
+      
+      float signedDistance_glsl(vec2 p, vec2 poly[${MAX_VERTICES}], int count) {
+        if (count < 3) return 1.0;
+        float minDst = 1e9;
+        for (int i = 0; i < ${MAX_VERTICES}; ++i) {
+          if (i >= count) break;
+          vec2 p1 = poly[i];
+          vec2 p2 = poly[int(mod(float(i) + 1.0, float(count)))];
+          minDst = min(minDst, distanceToSegment(p, p1, p2));
+        }
+	      const float PI = 3.1415926535;
+        float totalAngle = 0.0;
+        for (int i = 0; i < ${MAX_VERTICES}; ++i) {
+          if (i >= count) break;
+          vec2 v1 = poly[i] - p;
+          vec2 v2 = poly[int(mod(float(i)+1.0, float(count)))] - p;
+          float angle1 = atan(v1.y, v1.x);
+          float angle2 = atan(v2.y, v2.x);
+          float deltaAngle = angle2 - angle1;
+          if (deltaAngle > PI) deltaAngle -= 2.0 * PI;
+          if (deltaAngle < -PI) deltaAngle += 2.0 * PI;
+          totalAngle += deltaAngle;
+        }
+        return abs(totalAngle) > PI ? -minDst : minDst;
+      }
+
+      vec2 getPointAt_glsl(float t) {
+        if (u_totalPerimeter == 0.0) return u_polygon[0];
+        float targetDist = mod(t, 1.0) * u_totalPerimeter;
+
+        for (int i = 0; i < ${MAX_VERTICES}; ++i) {
+          if (i >= u_vertexCount) break;
+
+          float segLen = u_segmentLengths[i];
+          if (targetDist <= segLen && segLen > 0.0) {
+            vec2 p1 = u_polygon[i];
+            vec2 p2 = u_polygon[int(mod(float(i) + 1.0, float(u_vertexCount)))];
+            return mix(p1, p2, targetDist / segLen);
+          }
+          targetDist -= segLen;
+        }
+        return u_polygon[0];
+      }
+
+      void main() {
+        float d = v_uv.x;
+        float a = v_uv.y;
+
+        vec2 vertexA = getPointAt_glsl(a);
+        vec2 vertexC = getPointAt_glsl(a + d);
+
+        vec2 center = (vertexA + vertexC) / 2.0;
+        vec2 halfDiagonal = (vertexC - vertexA) / 2.0;
+        vec2 vertexB = center + vec2(-halfDiagonal.y, halfDiagonal.x);
+        vec2 vertexD = center + vec2(halfDiagonal.y, -halfDiagonal.x);
+
+        float sd_B = signedDistance_glsl(vertexB, u_polygon, u_vertexCount);
+        float sd_D = signedDistance_glsl(vertexD, u_polygon, u_vertexCount);
+
+        float error = sd_B * sd_B + sd_D * sd_D;
+        float maxError = 0.1 * 0.1;
+
+        float t = clamp(error / maxError, 0.0, 1.0);
+        
+        gl_FragColor = vec4(vec3(1.0 - t), 1.0);
+      }
+    `;
+    
+    const daShaderMaterial = new THREE.ShaderMaterial({
+      vertexShader,
+      fragmentShader: daFragmentShader,
+      uniforms: {
+        u_polygon: { value: [] },
+        u_vertexCount: { value: 0 },
+        u_segmentLengths: { value: [] },
+        u_totalPerimeter: { value: 0.0 }
+      }
+    });
+    daPlane.material = daShaderMaterial;
+
+    const crosshairX = document.getElementById('crosshair-x');
+    const crosshairY = document.getElementById('crosshair-y');
+    
     function updatePerimeter() {
       totalPerimeter = 0;
       segmentLengths.length = 0;
@@ -341,14 +436,12 @@
     function getPointAt(t) {
       if (totalPerimeter === 0) return polygon[0].clone();
       let targetDist = t * totalPerimeter;
-
       for (let i = 0; i < polygon.length; i++) {
         const segLen = segmentLengths[i];
-        if (targetDist <= segLen) {
+        if (targetDist <= segLen && segLen > 0) {
           const p1 = polygon[i];
           const p2 = polygon[(i + 1) % polygon.length];
-          const fraction = segLen > 0 ? targetDist / segLen : 0;
-          return new THREE.Vector2().lerpVectors(p1, p2, fraction);
+          return new THREE.Vector2().lerpVectors(p1, p2, targetDist / segLen);
         }
         targetDist -= segLen;
       }
@@ -380,19 +473,6 @@
       });
     }
 
-    // --- DA Plot Setup ---
-    const daCanvas = document.getElementById('da-canvas');
-    const daCtx = daCanvas.getContext('2d');
-    const crosshairX = document.getElementById('crosshair-x');
-    const crosshairY = document.getElementById('crosshair-y');
-
-    function drawDaPlot() {
-      daCtx.fillStyle = '#FFFFFF';
-      daCtx.fillRect(0, 0, daCanvas.width, daCanvas.height);
-      daCtx.strokeStyle = '#E5E7EB';
-      daCtx.strokeRect(0, 0, daCanvas.width, daCanvas.height);
-    }
-
     daCanvas.addEventListener('pointermove', (event) => {
       const rect = daCanvas.getBoundingClientRect();
       const x = event.clientX - rect.left;
@@ -404,7 +484,7 @@
       crosshairY.style.top = `${y}px`;
 
       const d = x / rect.width;
-      const a = 1 - (y / rect.height); // Y is inverted in canvas
+      const a = 1 - (y / rect.height);
 
       const vertexA = getPointAt(a);
       const vertexC = getPointAt((a + d) % 1.0);
@@ -415,7 +495,6 @@
       ]);
       chordLine.visible = true;
 
-      // Calculate and draw the square
       const center = new THREE.Vector2((vertexA.x + vertexC.x) / 2, (vertexA.y + vertexC.y) / 2);
       const halfDiagonal = new THREE.Vector2((vertexC.x - vertexA.x) / 2, (vertexC.y - vertexA.y) / 2);
       const vertexB = new THREE.Vector2(center.x - halfDiagonal.y, center.y + halfDiagonal.x);
@@ -574,9 +653,21 @@
       while (paddedPolygon.length < MAX_VERTICES) {
         paddedPolygon.push(new THREE.Vector2(0, 0));
       }
+      const paddedSegmentLengths = [...segmentLengths];
+      while (paddedSegmentLengths.length < MAX_VERTICES) {
+        paddedSegmentLengths.push(0.0);
+      }
+
       shaderMaterial.uniforms.u_polygon.value = paddedPolygon;
       shaderMaterial.uniforms.u_vertexCount.value = polygon.length;
+      
+      daShaderMaterial.uniforms.u_polygon.value = paddedPolygon;
+      daShaderMaterial.uniforms.u_vertexCount.value = polygon.length;
+      daShaderMaterial.uniforms.u_segmentLengths.value = paddedSegmentLengths;
+      daShaderMaterial.uniforms.u_totalPerimeter.value = totalPerimeter;
+
       renderer.render(scene, camera);
+      daRenderer.render(daScene, daCamera);
     }
 
     function onResize() {
@@ -584,8 +675,7 @@
       plotContainers.forEach(container => {
         const { width } = container.getBoundingClientRect();
         if (container.classList.contains('da-plot-container')) {
-          daCanvas.width = daCanvas.height = width;
-          drawDaPlot();
+          daRenderer.setSize(width, width, false);
         } else {
            renderer.setSize(width, width, false);
         }
