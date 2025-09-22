@@ -3,9 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <title>Polygon Visualizer</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.152.0/three.min.js"
-    xintegrity="sha512-Xr/WOAkCSWjhjwU5imbX1t2vZA4mDHqQJkuXOgzWH28GNXC9BfzuO54z3Byhb1xYGedSGlDMqFaoAI6DtOtC2g=="
-    crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.152.0/build/three.module.js"
+      }
+    }
+  </script>
   <style>
     :root {
       color-scheme: light dark;
@@ -37,16 +41,72 @@
       letter-spacing: 0.04em;
     }
 
-    .canvas-container {
+    .plots-wrapper {
+      display: flex;
+      gap: 2rem;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .plot-container {
       position: relative;
-      margin: 1rem auto;
-      width: min(600px, 70vw);
+      width: min(400px, 40vw);
       aspect-ratio: 1 / 1;
+    }
+
+    .canvas-container {
       border-radius: 16px;
       overflow: hidden;
       box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
       background: #101827;
+      width: 100%;
+      height: 100%;
     }
+
+    .da-plot-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .axis-label {
+      position: absolute;
+      font-size: 0.9rem;
+      color: #475569;
+      font-weight: 500;
+    }
+
+    .axis-label.y-axis {
+      transform: rotate(-90deg);
+      left: -2rem;
+    }
+
+    .axis-label.x-axis {
+      bottom: -2rem;
+    }
+
+    #da-canvas {
+      border: 1px solid #d1d5db;
+    }
+
+    .crosshair {
+      position: absolute;
+      background-color: rgba(200, 200, 200, 0.5);
+      pointer-events: none;
+      display: none;
+    }
+
+    .crosshair.x {
+      height: 100%;
+      width: 1px;
+    }
+
+    .crosshair.y {
+      width: 100%;
+      height: 1px;
+    }
+
 
     canvas {
       width: 100%;
@@ -56,6 +116,7 @@
     }
 
     .controls {
+      margin-top: 1rem;
       display: flex;
       flex-direction: column;
       gap: 0.75rem;
@@ -95,8 +156,19 @@
 <body>
   <div class="wrapper">
     <h1>Polygon Playground</h1>
-    <div class="canvas-container">
-      <canvas id="vis-canvas"></canvas>
+    <div class="plots-wrapper">
+      <div class="plot-container">
+        <div class="canvas-container">
+          <canvas id="vis-canvas"></canvas>
+        </div>
+      </div>
+      <div class="plot-container da-plot-container">
+        <span class="axis-label y-axis">a</span>
+        <canvas id="da-canvas"></canvas>
+        <span class="axis-label x-axis">d</span>
+        <div class="crosshair x" id="crosshair-x"></div>
+        <div class="crosshair y" id="crosshair-y"></div>
+      </div>
     </div>
     <div class="controls">
       <button id="delete-vertex">Delete Selected Vertex</button>
@@ -107,7 +179,10 @@
     </div>
   </div>
 
-  <script>
+  <script type="module">
+    import * as THREE from 'three';
+
+    // --- Main Polygon Visualization Setup ---
     const canvas = document.getElementById('vis-canvas');
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
@@ -119,12 +194,9 @@
     camera.position.set(0, 0, 5);
     camera.lookAt(new THREE.Vector3(0, 0, 0));
 
-    // A plane that will fill the screen and host our SDF shader
-    const backgroundPlane = new THREE.Mesh(
-      new THREE.PlaneGeometry(1, 1)
-    );
+    const backgroundPlane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1));
     backgroundPlane.position.set(0.5, 0.5, -1);
-    backgroundPlane.renderOrder = -1; // Ensure it renders first
+    backgroundPlane.renderOrder = -1;
     scene.add(backgroundPlane);
 
     const polygon = [
@@ -134,13 +206,17 @@
       new THREE.Vector2(0.25, 0.75)
     ];
 
-    const lineMaterial = new THREE.LineBasicMaterial({
-      color: 0xffffff,
-      linewidth: 2
-    });
-    const lineGeometry = new THREE.BufferGeometry();
-    const line = new THREE.LineLoop(lineGeometry, lineMaterial);
+    const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
+    const line = new THREE.LineLoop(new THREE.BufferGeometry(), lineMaterial);
     scene.add(line);
+
+    // --- Chord Visualization Setup ---
+    const chordMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 });
+    const chordGeometry = new THREE.BufferGeometry();
+    const chordLine = new THREE.Line(chordGeometry, chordMaterial);
+    chordLine.visible = false;
+    scene.add(chordLine);
+
 
     const vertexGeometry = new THREE.CircleGeometry(0.015, 24);
     const baseColor = new THREE.Color(0x3b82f6);
@@ -149,10 +225,10 @@
 
     let selectedVertexIndex = null;
     let isDragging = false;
+    let totalPerimeter = 0;
+    const segmentLengths = [];
 
-    const MAX_VERTICES = 50; // A hard limit for the shader array
-
-    // Standard vertex shader: sets position and passes UVs to the fragment shader.
+    const MAX_VERTICES = 50;
     const vertexShader = `
       varying vec2 v_uv;
       void main() {
@@ -160,8 +236,6 @@
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `;
-
-    // Fragment shader: calculates signed distance and colors pixels accordingly.
     const fragmentShader = `
       varying vec2 v_uv;
       uniform vec2 u_polygon[${MAX_VERTICES}];
@@ -173,17 +247,13 @@
       uniform float u_rangeOutside;
 
       float distanceToSegment(vec2 p, vec2 a, vec2 b) {
-        vec2 ab = b - a;
-        vec2 ap = p - a;
+        vec2 ab = b - a; vec2 ap = p - a;
         float t = clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0);
-        vec2 closest = a + t * ab;
-        return distance(p, closest);
+        return distance(p, a + t * ab);
       }
       
       float signedDistance_glsl(vec2 p, vec2 poly[${MAX_VERTICES}], int count) {
-        float minDst = 1e9; // Large number
-        
-        // 1. Calculate minimum distance to an edge
+        float minDst = 1e9;
         for (int i = 0; i < ${MAX_VERTICES}; ++i) {
           if (i >= count) break;
           vec2 p1 = poly[i];
@@ -191,56 +261,38 @@
           minDst = min(minDst, distanceToSegment(p, p1, p2));
         }
         
-        // 2. Calculate inside/outside using the Winding Number Algorithm
 	      const float PI = 3.1415926535;
         float totalAngle = 0.0;
-        
         for (int i = 0; i < ${MAX_VERTICES}; ++i) {
           if (i >= count) break;
-          
-          vec2 p1 = poly[i];
-          vec2 v1 = p1 - p;
-        
-          vec2 p2 = poly[int(mod(float(i) + 1.0, float(count)))];
-          vec2 v2 = p2 - p;
-        
+          vec2 v1 = poly[i] - p;
+          vec2 v2 = poly[int(mod(float(i)+1.0, float(count)))] - p;
           float angle1 = atan(v1.y, v1.x);
           float angle2 = atan(v2.y, v2.x);
-          
           float deltaAngle = angle2 - angle1;
           if (deltaAngle > PI) deltaAngle -= 2.0 * PI;
           if (deltaAngle < -PI) deltaAngle += 2.0 * PI;
-          
           totalAngle += deltaAngle;
         }
-        
-        bool isInside = abs(totalAngle) > PI;
-        
-        return isInside ? -minDst : minDst;
+        return abs(totalAngle) > PI ? -minDst : minDst;
       }
     
       void main() {
         float sd = signedDistance_glsl(v_uv, u_polygon, u_vertexCount);
-        
         vec3 finalColor;
-      
         if (sd >= 0.0) {
-          // OUTSIDE: Blend from White (boundary) to Orange (far away)
           float t = smoothstep(0.0, u_rangeOutside, sd);
           finalColor = mix(u_colorBoundary, u_colorOutside, t);
         } else {
-          // INSIDE: Blend from White (boundary) to Deep Blue (deep inside)
           float t = smoothstep(0.0, u_rangeInside, -sd);
           finalColor = mix(u_colorBoundary, u_colorInside, t);
         }
-        
         gl_FragColor = vec4(finalColor, 1.0);
       }
     `;
 
     const shaderMaterial = new THREE.ShaderMaterial({
-      vertexShader,
-      fragmentShader,
+      vertexShader, fragmentShader,
       uniforms: {
         u_polygon: { value: [] },
         u_vertexCount: { value: 0 },
@@ -251,28 +303,49 @@
         u_rangeOutside: { value: 0.20 },
       }
     });
-
     backgroundPlane.material = shaderMaterial;
 
-    function updateRendererSize() {
-      const { width, height } = canvas.parentElement.getBoundingClientRect();
-      const size = Math.min(width, height);
-      renderer.setSize(size, size, false);
+    function updatePerimeter() {
+      totalPerimeter = 0;
+      segmentLengths.length = 0;
+      for (let i = 0; i < polygon.length; i++) {
+        const p1 = polygon[i];
+        const p2 = polygon[(i + 1) % polygon.length];
+        const length = p1.distanceTo(p2);
+        segmentLengths.push(length);
+        totalPerimeter += length;
+      }
     }
 
-    function updateLine() {
+    function getPointAt(t) {
+      if (totalPerimeter === 0) return polygon[0].clone();
+      let targetDist = t * totalPerimeter;
+
+      for (let i = 0; i < polygon.length; i++) {
+        const segLen = segmentLengths[i];
+        if (targetDist <= segLen) {
+          const p1 = polygon[i];
+          const p2 = polygon[(i + 1) % polygon.length];
+          const fraction = targetDist / segLen;
+          return new THREE.Vector2().lerpVectors(p1, p2, fraction);
+        }
+        targetDist -= segLen;
+      }
+      return polygon[0].clone();
+    }
+
+    function updateLineAndPerimeter() {
       const points3 = polygon.map((p) => new THREE.Vector3(p.x, p.y, 0));
       line.geometry.setFromPoints(points3);
+      updatePerimeter();
     }
 
     function rebuildVertices() {
       while (vertexMeshes.length > polygon.length) {
-        const mesh = vertexMeshes.pop();
-        scene.remove(mesh);
+        scene.remove(vertexMeshes.pop());
       }
       while (vertexMeshes.length < polygon.length) {
-        const material = new THREE.MeshBasicMaterial({ color: baseColor });
-        const mesh = new THREE.Mesh(vertexGeometry, material);
+        const mesh = new THREE.Mesh(vertexGeometry, new THREE.MeshBasicMaterial({ color: baseColor }));
         mesh.renderOrder = 1;
         vertexMeshes.push(mesh);
         scene.add(mesh);
@@ -282,15 +355,52 @@
         mesh.position.set(point.x, point.y, 0);
         const isSelected = index === selectedVertexIndex;
         mesh.material.color.copy(isSelected ? highlightColor : baseColor);
-        const scale = isSelected ? 1.4 : 1.0;
-        mesh.scale.set(scale, scale, 1);
+        mesh.scale.set(isSelected ? 1.4 : 1.0, isSelected ? 1.4 : 1.0, 1);
       });
     }
 
-    function setSelectedVertex(index) {
-      selectedVertexIndex = index;
-      rebuildVertices();
+    // --- DA Plot Setup ---
+    const daCanvas = document.getElementById('da-canvas');
+    const daCtx = daCanvas.getContext('2d');
+    const crosshairX = document.getElementById('crosshair-x');
+    const crosshairY = document.getElementById('crosshair-y');
+
+    function drawDaPlot() {
+      daCtx.fillStyle = '#FFFFFF';
+      daCtx.fillRect(0, 0, daCanvas.width, daCanvas.height);
+      daCtx.strokeStyle = '#E5E7EB';
+      daCtx.strokeRect(0, 0, daCanvas.width, daCanvas.height);
     }
+
+    daCanvas.addEventListener('pointermove', (event) => {
+      const rect = daCanvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+
+      crosshairX.style.display = 'block';
+      crosshairY.style.display = 'block';
+      crosshairX.style.left = `${x}px`;
+      crosshairY.style.top = `${y}px`;
+
+      const d = x / rect.width;
+      const a = 1 - (y / rect.height); // Y is inverted in canvas
+
+      const p1 = getPointAt(a);
+      const p2 = getPointAt((a + d) % 1.0);
+
+      chordLine.geometry.setFromPoints([
+        new THREE.Vector3(p1.x, p1.y, 0),
+        new THREE.Vector3(p2.x, p2.y, 0)
+      ]);
+      chordLine.geometry.verticesNeedUpdate = true;
+      chordLine.visible = true;
+    });
+
+    daCanvas.addEventListener('pointerleave', () => {
+      crosshairX.style.display = 'none';
+      crosshairY.style.display = 'none';
+      chordLine.visible = false;
+    });
 
     function getPointerPosition(event) {
       const rect = canvas.getBoundingClientRect();
@@ -298,14 +408,7 @@
       const y = 1 - (event.clientY - rect.top) / rect.height;
       return new THREE.Vector2(x, y);
     }
-
-    function distanceToSegment(point, a, b) {
-      const ab = new THREE.Vector2().subVectors(b, a);
-      const ap = new THREE.Vector2().subVectors(point, a);
-      const t = Math.max(0, Math.min(1, ap.dot(ab) / ab.lengthSq()));
-      const closest = new THREE.Vector2().copy(a).add(ab.multiplyScalar(t));
-      return closest.distanceTo(point);
-    }
+    // ... (rest of the interaction and validation functions)
 
     function trySelectVertex(pos) {
       const threshold = 0.03;
@@ -319,10 +422,19 @@
         }
       });
       if (closestIndex !== null) {
-        setSelectedVertex(closestIndex);
+        selectedVertexIndex = index;
+        rebuildVertices();
         return true;
       }
       return false;
+    }
+    
+    function distanceToSegment(point, a, b) {
+      const ab = new THREE.Vector2().subVectors(b, a);
+      const ap = new THREE.Vector2().subVectors(point, a);
+      const t = Math.max(0, Math.min(1, ap.dot(ab) / ab.lengthSq()));
+      const closest = new THREE.Vector2().copy(a).add(ab.multiplyScalar(t));
+      return closest.distanceTo(point);
     }
 
     function tryInsertVertexOnEdge(pos) {
@@ -332,9 +444,9 @@
         const dist = distanceToSegment(pos, polygon[i], polygon[nextIndex]);
         if (dist < threshold) {
           polygon.splice(nextIndex, 0, pos.clone());
-          setSelectedVertex(nextIndex);
+          selectedVertexIndex = nextIndex;
           rebuildVertices();
-          updateLine();
+          updateLineAndPerimeter();
           return true;
         }
       }
@@ -346,27 +458,20 @@
       point.y = Math.min(Math.max(point.y, 0), 1);
     }
 
-    /**
-     * Finds the orientation of the ordered triplet (p, q, r).
-     * @returns 0 -> collinear, 1 -> clockwise, 2 -> counter-clockwise
-     */
     function getOrientation(p, q, r) {
       const val = (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
       if (Math.abs(val) < 1e-5) return 0;
       return (val > 0) ? 1 : 2;
     }
 
-    /** Checks if line segment 'p1q1' and 'p2q2' intersect. */
     function segmentsIntersect(p1, q1, p2, q2) {
       const o1 = getOrientation(p1, q1, p2);
       const o2 = getOrientation(p1, q1, q2);
       const o3 = getOrientation(p2, q2, p1);
       const o4 = getOrientation(p2, q2, q1);
-      if (o1 !== o2 && o3 !== o4) return true;
-      return false;
+      return (o1 !== o2 && o3 !== o4);
     }
 
-    /** Checks if the polygon is valid (i.e., does not self-intersect). */
     function isPolygonValid(poly) {
       const n = poly.length;
       if (n <= 3) return true;
@@ -374,7 +479,7 @@
         const p1 = poly[i];
         const q1 = poly[(i + 1) % n];
         for (let j = i + 2; j < n; j++) {
-          if ((j + 1) % n === i) continue; // Skip adjacent edges
+          if ((j + 1) % n === i) continue;
           const p2 = poly[j];
           const q2 = poly[(j + 1) % n];
           if (segmentsIntersect(p1, q1, p2, q2)) return false;
@@ -388,25 +493,22 @@
       const pos = getPointerPosition(event);
       if (trySelectVertex(pos) || tryInsertVertexOnEdge(pos)) {
         isDragging = true;
-        return;
+      } else {
+        selectedVertexIndex = null;
+        rebuildVertices();
       }
-      setSelectedVertex(null);
     });
 
     canvas.addEventListener('pointermove', (event) => {
       if (!isDragging || selectedVertexIndex === null) return;
       const pos = getPointerPosition(event);
       clampPoint(pos);
-
-      // Create a temporary copy of the polygon to test the move.
       const tempPolygon = polygon.map(p => p.clone());
       tempPolygon[selectedVertexIndex].copy(pos);
-
-      // If the new shape is valid, apply changes to the real polygon.
       if (isPolygonValid(tempPolygon)) {
         polygon[selectedVertexIndex].copy(pos);
         vertexMeshes[selectedVertexIndex].position.set(pos.x, pos.y, 0);
-        updateLine();
+        updateLineAndPerimeter();
       }
     });
 
@@ -414,18 +516,16 @@
       if (event) canvas.releasePointerCapture(event.pointerId);
       isDragging = false;
     }
-
     canvas.addEventListener('pointerup', endDrag);
     canvas.addEventListener('pointerleave', endDrag);
 
     document.getElementById('delete-vertex').addEventListener('click', () => {
-      if (selectedVertexIndex === null || polygon.length <= 2) return;
+      if (selectedVertexIndex === null || polygon.length <= 3) return;
       polygon.splice(selectedVertexIndex, 1);
-      const mesh = vertexMeshes.splice(selectedVertexIndex, 1)[0];
-      scene.remove(mesh);
+      scene.remove(vertexMeshes.splice(selectedVertexIndex, 1)[0]);
       selectedVertexIndex = null;
       rebuildVertices();
-      updateLine();
+      updateLineAndPerimeter();
     });
 
     function renderLoop() {
@@ -438,12 +538,26 @@
       renderer.render(scene, camera);
     }
 
-    renderer.setAnimationLoop(renderLoop);
-    updateLine();
-    rebuildVertices();
-    updateRendererSize();
+    function onResize() {
+      const plotContainers = document.querySelectorAll('.plot-container');
+      plotContainers.forEach(container => {
+        const { width } = container.getBoundingClientRect();
+        if (container.classList.contains('da-plot-container')) {
+          daCanvas.width = daCanvas.height = width;
+          drawDaPlot();
+        } else {
+           renderer.setSize(width, width, false);
+        }
+      });
+    }
+    window.addEventListener('resize', onResize);
 
-    window.addEventListener('resize', updateRendererSize);
+    // Initial setup
+    renderer.setAnimationLoop(renderLoop);
+    updateLineAndPerimeter();
+    rebuildVertices();
+    onResize();
+
   </script>
 </body>
 </html>
