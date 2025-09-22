@@ -412,7 +412,7 @@
     // --- BD Error Plot Setup ---
     const bdCanvas = document.getElementById('bd-canvas');
     const bdCtx = bdCanvas.getContext('2d');
-    const bdErrorRange = 0.8; // Plot range from -0.8 to 0.8
+    let bdErrorRange = 0.8; // Plot range, will be updated dynamically
     const crosshairBdX = document.getElementById('crosshair-bd-x');
     const crosshairBdY = document.getElementById('crosshair-bd-y');
 
@@ -424,13 +424,11 @@
       bdCtx.strokeStyle = '#000000';
       bdCtx.lineWidth = 1;
       
-      // Y-axis
       bdCtx.beginPath();
       bdCtx.moveTo(w / 2, 0);
       bdCtx.lineTo(w / 2, h);
       bdCtx.stroke();
       
-      // X-axis
       bdCtx.beginPath();
       bdCtx.moveTo(0, h / 2);
       bdCtx.lineTo(w, h / 2);
@@ -438,7 +436,7 @@
     }
 
     function drawBdLoop(d) {
-        drawBdPlot(); // Clear and draw axes first
+        drawBdPlot();
         const samples = 200;
         bdCtx.beginPath();
 
@@ -468,6 +466,33 @@
         bdCtx.strokeStyle = 'green';
         bdCtx.lineWidth = 1.5;
         bdCtx.stroke();
+    }
+    
+    function updateBdErrorRange() {
+        let maxAbsError = 0.0;
+        const samples = 50; // 50x50 grid for performance
+
+        for (let i = 0; i < samples; i++) {
+            const d = i / (samples - 1);
+            for (let j = 0; j < samples; j++) {
+                const a = j / (samples - 1);
+
+                const vertexA = getPointAt(a);
+                const vertexC = getPointAt((a + d) % 1.0);
+
+                const center = new THREE.Vector2((vertexA.x + vertexC.x) / 2, (vertexA.y + vertexC.y) / 2);
+                const halfDiagonal = new THREE.Vector2((vertexC.x - vertexA.x) / 2, (vertexC.y - vertexA.y) / 2);
+                const vertexB = new THREE.Vector2(center.x - halfDiagonal.y, center.y + halfDiagonal.x);
+                const vertexD = new THREE.Vector2(center.x + halfDiagonal.y, center.y - halfDiagonal.x);
+
+                const sd_B = signedDistance(vertexB, polygon);
+                const sd_D = signedDistance(vertexD, polygon);
+                
+                maxAbsError = Math.max(maxAbsError, Math.abs(sd_B), Math.abs(sd_D));
+            }
+        }
+        bdErrorRange = maxAbsError > 1e-5 ? maxAbsError * 1.1 : 0.1; 
+        drawBdPlot();
     }
 
 
@@ -588,7 +613,6 @@
       squareVertexB_mesh.visible = true;
       squareVertexD_mesh.visible = true;
       
-      // Update BD-plot crosshairs
       const sd_B = signedDistance(vertexB, polygon);
       const sd_D = signedDistance(vertexD, polygon);
       const bdPixelX = (sd_B / (2 * bdErrorRange) + 0.5) * bdCanvas.width;
@@ -601,7 +625,7 @@
     });
 
     daCanvas.addEventListener('pointerleave', () => {
-      drawBdPlot(); // Clear the green loop
+      drawBdPlot(); 
       crosshairDaX.style.display = 'none';
       crosshairDaY.style.display = 'none';
       crosshairBdX.style.display = 'none';
@@ -656,6 +680,7 @@
           selectedVertexIndex = nextIndex;
           rebuildVertices();
           updateLineAndPerimeter();
+          updateBdErrorRange();
           return true;
         }
       }
@@ -723,6 +748,9 @@
 
     function endDrag(event) {
       if (event) canvas.releasePointerCapture(event.pointerId);
+      if (isDragging) {
+        updateBdErrorRange();
+      }
       isDragging = false;
     }
     canvas.addEventListener('pointerup', endDrag);
@@ -731,10 +759,10 @@
     function deleteSelectedVertex() {
       if (selectedVertexIndex === null || polygon.length <= 3) return;
       polygon.splice(selectedVertexIndex, 1);
-      scene.remove(vertexMeshes.splice(selectedVertexIndex, 1)[0]);
       selectedVertexIndex = null;
       rebuildVertices();
       updateLineAndPerimeter();
+      updateBdErrorRange();
     }
 
     window.addEventListener('keydown', (event) => {
@@ -778,14 +806,15 @@
            renderer.setSize(width, width, false);
         }
       });
+      updateBdErrorRange();
     }
     window.addEventListener('resize', onResize);
 
     // Initial setup
-    renderer.setAnimationLoop(renderLoop);
     updateLineAndPerimeter();
     rebuildVertices();
     onResize();
+    renderer.setAnimationLoop(renderLoop);
 
   </script>
 </body>
