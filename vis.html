@@ -437,6 +437,39 @@
       bdCtx.stroke();
     }
 
+    function drawBdLoop(d) {
+        drawBdPlot(); // Clear and draw axes first
+        const samples = 200;
+        bdCtx.beginPath();
+
+        for (let i = 0; i <= samples; i++) {
+            const a = i / samples;
+            const vertexA = getPointAt(a);
+            const vertexC = getPointAt((a + d) % 1.0);
+
+            const center = new THREE.Vector2((vertexA.x + vertexC.x) / 2, (vertexA.y + vertexC.y) / 2);
+            const halfDiagonal = new THREE.Vector2((vertexC.x - vertexA.x) / 2, (vertexC.y - vertexA.y) / 2);
+            const vertexB = new THREE.Vector2(center.x - halfDiagonal.y, center.y + halfDiagonal.x);
+            const vertexD = new THREE.Vector2(center.x + halfDiagonal.y, center.y - halfDiagonal.x);
+
+            const sd_B = signedDistance(vertexB, polygon);
+            const sd_D = signedDistance(vertexD, polygon);
+
+            const pixelX = (sd_B / (2 * bdErrorRange) + 0.5) * bdCanvas.width;
+            const pixelY = (1 - (sd_D / (2 * bdErrorRange) + 0.5)) * bdCanvas.height;
+
+            if (i === 0) {
+                bdCtx.moveTo(pixelX, pixelY);
+            } else {
+                bdCtx.lineTo(pixelX, pixelY);
+            }
+        }
+        
+        bdCtx.strokeStyle = 'green';
+        bdCtx.lineWidth = 1.5;
+        bdCtx.stroke();
+    }
+
 
     function updatePerimeter() {
       totalPerimeter = 0;
@@ -517,14 +550,16 @@
       const rect = daCanvas.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
+      
+      const d = x / rect.width;
+      const a = 1 - (y / rect.height);
+      
+      drawBdLoop(d);
 
       crosshairDaX.style.display = 'block';
       crosshairDaY.style.display = 'block';
       crosshairDaX.style.left = `${x}px`;
       crosshairDaY.style.top = `${y}px`;
-
-      const d = x / rect.width;
-      const a = 1 - (y / rect.height);
 
       const vertexA = getPointAt(a);
       const vertexC = getPointAt((a + d) % 1.0);
@@ -566,6 +601,7 @@
     });
 
     daCanvas.addEventListener('pointerleave', () => {
+      drawBdPlot(); // Clear the green loop
       crosshairDaX.style.display = 'none';
       crosshairDaY.style.display = 'none';
       crosshairBdX.style.display = 'none';
