@@ -43,14 +43,14 @@
 
     .plots-wrapper {
       display: flex;
-      gap: 2rem;
+      gap: 1.5rem;
       align-items: center;
       justify-content: center;
     }
 
     .plot-container {
       position: relative;
-      width: min(400px, 40vw);
+      width: min(300px, 28vw);
       aspect-ratio: 1 / 1;
     }
 
@@ -63,14 +63,14 @@
       height: 100%;
     }
 
-    .da-plot-container {
+    .da-plot-container, .bd-plot-container {
       position: relative;
       display: flex;
       align-items: center;
       justify-content: center;
     }
     
-    #da-canvas {
+    #da-canvas, #bd-canvas {
       border-radius: 16px;
       overflow: hidden;
     }
@@ -84,11 +84,11 @@
 
     .axis-label.y-axis {
       transform: rotate(-90deg);
-      left: -2rem;
+      left: -2.2rem;
     }
 
     .axis-label.x-axis {
-      bottom: -2rem;
+      bottom: -1.8rem;
     }
 
     .crosshair {
@@ -96,6 +96,10 @@
       background-color: rgba(200, 200, 200, 0.5);
       pointer-events: none;
       display: none;
+    }
+    
+    .bd-plot-container .crosshair {
+        background-color: rgba(255, 0, 0, 0.5);
     }
 
     .crosshair.x {
@@ -124,28 +128,6 @@
       align-items: center;
     }
 
-    button {
-      padding: 0.6rem 1.4rem;
-      border-radius: 999px;
-      border: none;
-      background: linear-gradient(135deg, #2563eb, #38bdf8);
-      color: white;
-      font-size: 1rem;
-      letter-spacing: 0.03em;
-      box-shadow: 0 10px 20px rgba(59, 130, 246, 0.25);
-      cursor: pointer;
-      transition: transform 0.15s ease, box-shadow 0.15s ease;
-    }
-
-    button:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 16px 30px rgba(59, 130, 246, 0.35);
-    }
-
-    button:active {
-      transform: translateY(1px);
-    }
-
     .hint {
       margin: 0;
       max-width: 420px;
@@ -167,8 +149,15 @@
         <span class="axis-label y-axis">a</span>
         <canvas id="da-canvas"></canvas>
         <span class="axis-label x-axis">d</span>
-        <div class="crosshair x" id="crosshair-x"></div>
-        <div class="crosshair y" id="crosshair-y"></div>
+        <div class="crosshair x" id="crosshair-da-x"></div>
+        <div class="crosshair y" id="crosshair-da-y"></div>
+      </div>
+       <div class="plot-container bd-plot-container">
+        <span class="axis-label y-axis">sd_D</span>
+        <canvas id="bd-canvas"></canvas>
+        <span class="axis-label x-axis">sd_B</span>
+        <div class="crosshair x" id="crosshair-bd-x"></div>
+        <div class="crosshair y" id="crosshair-bd-y"></div>
       </div>
     </div>
     <div class="controls">
@@ -417,9 +406,38 @@
     });
     daPlane.material = daShaderMaterial;
 
-    const crosshairX = document.getElementById('crosshair-x');
-    const crosshairY = document.getElementById('crosshair-y');
+    const crosshairDaX = document.getElementById('crosshair-da-x');
+    const crosshairDaY = document.getElementById('crosshair-da-y');
     
+    // --- BD Error Plot Setup ---
+    const bdCanvas = document.getElementById('bd-canvas');
+    const bdCtx = bdCanvas.getContext('2d');
+    const bdErrorRange = 0.8; // Plot range from -0.8 to 0.8
+    const crosshairBdX = document.getElementById('crosshair-bd-x');
+    const crosshairBdY = document.getElementById('crosshair-bd-y');
+
+    function drawBdPlot() {
+      const w = bdCanvas.width;
+      const h = bdCanvas.height;
+      bdCtx.fillStyle = '#FFFFFF';
+      bdCtx.fillRect(0, 0, w, h);
+      bdCtx.strokeStyle = '#000000';
+      bdCtx.lineWidth = 1;
+      
+      // Y-axis
+      bdCtx.beginPath();
+      bdCtx.moveTo(w / 2, 0);
+      bdCtx.lineTo(w / 2, h);
+      bdCtx.stroke();
+      
+      // X-axis
+      bdCtx.beginPath();
+      bdCtx.moveTo(0, h / 2);
+      bdCtx.lineTo(w, h / 2);
+      bdCtx.stroke();
+    }
+
+
     function updatePerimeter() {
       totalPerimeter = 0;
       segmentLengths.length = 0;
@@ -445,6 +463,29 @@
         targetDist -= segLen;
       }
       return polygon[0].clone();
+    }
+    
+    function isPointInside(point, poly) {
+      let isInside = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const p1 = poly[i];
+        const p2 = poly[j];
+        const intersect = ((p1.y > point.y) !== (p2.y > point.y))
+            && (point.x < (p2.x - p1.x) * (point.y - p1.y) / (p2.y - p1.y) + p1.x);
+        if (intersect) isInside = !isInside;
+      }
+      return isInside;
+    }
+    
+    function signedDistance(point, poly) {
+        if (poly.length < 3) return 1.0;
+        let minDistance = Infinity;
+        for (let i = 0; i < poly.length; i++) {
+            const p1 = poly[i];
+            const p2 = poly[(i + 1) % poly.length];
+            minDistance = Math.min(minDistance, distanceToSegment(point, p1, p2));
+        }
+        return isPointInside(point, poly) ? -minDistance : minDistance;
     }
 
     function updateLineAndPerimeter() {
@@ -477,10 +518,10 @@
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
 
-      crosshairX.style.display = 'block';
-      crosshairY.style.display = 'block';
-      crosshairX.style.left = `${x}px`;
-      crosshairY.style.top = `${y}px`;
+      crosshairDaX.style.display = 'block';
+      crosshairDaY.style.display = 'block';
+      crosshairDaX.style.left = `${x}px`;
+      crosshairDaY.style.top = `${y}px`;
 
       const d = x / rect.width;
       const a = 1 - (y / rect.height);
@@ -511,11 +552,24 @@
       squareVertexD_mesh.position.set(vertexD.x, vertexD.y, 0);
       squareVertexB_mesh.visible = true;
       squareVertexD_mesh.visible = true;
+      
+      // Update BD-plot crosshairs
+      const sd_B = signedDistance(vertexB, polygon);
+      const sd_D = signedDistance(vertexD, polygon);
+      const bdPixelX = (sd_B / (2 * bdErrorRange) + 0.5) * bdCanvas.width;
+      const bdPixelY = (1 - (sd_D / (2 * bdErrorRange) + 0.5)) * bdCanvas.height;
+      
+      crosshairBdX.style.display = 'block';
+      crosshairBdY.style.display = 'block';
+      crosshairBdX.style.left = `${bdPixelX}px`;
+      crosshairBdY.style.top = `${bdPixelY}px`;
     });
 
     daCanvas.addEventListener('pointerleave', () => {
-      crosshairX.style.display = 'none';
-      crosshairY.style.display = 'none';
+      crosshairDaX.style.display = 'none';
+      crosshairDaY.style.display = 'none';
+      crosshairBdX.style.display = 'none';
+      crosshairBdY.style.display = 'none';
       chordLine.visible = false;
       squareLine.visible = false;
       squareVertexB_mesh.visible = false;
@@ -681,6 +735,9 @@
         const { width } = container.getBoundingClientRect();
         if (container.classList.contains('da-plot-container')) {
           daRenderer.setSize(width, width, false);
+        } else if (container.classList.contains('bd-plot-container')) {
+           bdCanvas.width = bdCanvas.height = width;
+           drawBdPlot();
         } else {
            renderer.setSize(width, width, false);
         }
