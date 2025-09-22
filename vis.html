@@ -210,12 +210,33 @@
     const line = new THREE.LineLoop(new THREE.BufferGeometry(), lineMaterial);
     scene.add(line);
 
-    // --- Chord Visualization Setup ---
+    // --- Chord and Square Visualization Setup ---
     const chordMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 });
     const chordGeometry = new THREE.BufferGeometry();
     const chordLine = new THREE.Line(chordGeometry, chordMaterial);
     chordLine.visible = false;
     scene.add(chordLine);
+
+    const squareMaterial = new THREE.LineBasicMaterial({
+      color: 0xff0000,
+      transparent: true,
+      opacity: 0.5
+    });
+    const squareGeometry = new THREE.BufferGeometry();
+    const squareLine = new THREE.LineLoop(squareGeometry, squareMaterial);
+    squareLine.visible = false;
+    scene.add(squareLine);
+
+    const otherVertexGeometry = new THREE.RingGeometry(0.008, 0.012, 24);
+    const otherVertexMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      side: THREE.DoubleSide
+    });
+    const otherVertex1 = new THREE.Mesh(otherVertexGeometry, otherVertexMaterial);
+    const otherVertex2 = new THREE.Mesh(otherVertexGeometry, otherVertexMaterial);
+    otherVertex1.visible = false;
+    otherVertex2.visible = false;
+    scene.add(otherVertex1, otherVertex2);
 
 
     const vertexGeometry = new THREE.CircleGeometry(0.015, 24);
@@ -326,7 +347,7 @@
         if (targetDist <= segLen) {
           const p1 = polygon[i];
           const p2 = polygon[(i + 1) % polygon.length];
-          const fraction = targetDist / segLen;
+          const fraction = segLen > 0 ? targetDist / segLen : 0;
           return new THREE.Vector2().lerpVectors(p1, p2, fraction);
         }
         targetDist -= segLen;
@@ -392,14 +413,37 @@
         new THREE.Vector3(p1.x, p1.y, 0),
         new THREE.Vector3(p2.x, p2.y, 0)
       ]);
-      chordLine.geometry.verticesNeedUpdate = true;
       chordLine.visible = true;
+
+      // Calculate and draw the square
+      const centerX = (p1.x + p2.x) / 2;
+      const centerY = (p1.y + p2.y) / 2;
+      const vecX = (p2.x - p1.x) / 2;
+      const vecY = (p2.y - p1.y) / 2;
+      const p3 = new THREE.Vector2(centerX - vecY, centerY + vecX);
+      const p4 = new THREE.Vector2(centerX + vecY, centerY - vecX);
+
+      squareLine.geometry.setFromPoints([
+        new THREE.Vector3(p1.x, p1.y, 0),
+        new THREE.Vector3(p3.x, p3.y, 0),
+        new THREE.Vector3(p2.x, p2.y, 0),
+        new THREE.Vector3(p4.x, p4.y, 0)
+      ]);
+      squareLine.visible = true;
+
+      otherVertex1.position.set(p3.x, p3.y, 0);
+      otherVertex2.position.set(p4.x, p4.y, 0);
+      otherVertex1.visible = true;
+      otherVertex2.visible = true;
     });
 
     daCanvas.addEventListener('pointerleave', () => {
       crosshairX.style.display = 'none';
       crosshairY.style.display = 'none';
       chordLine.visible = false;
+      squareLine.visible = false;
+      otherVertex1.visible = false;
+      otherVertex2.visible = false;
     });
 
     function getPointerPosition(event) {
