@@ -232,11 +232,11 @@
       color: 0xffffff,
       side: THREE.DoubleSide
     });
-    const otherVertex1 = new THREE.Mesh(otherVertexGeometry, otherVertexMaterial);
-    const otherVertex2 = new THREE.Mesh(otherVertexGeometry, otherVertexMaterial);
-    otherVertex1.visible = false;
-    otherVertex2.visible = false;
-    scene.add(otherVertex1, otherVertex2);
+    const squareVertexB_mesh = new THREE.Mesh(otherVertexGeometry, otherVertexMaterial);
+    const squareVertexD_mesh = new THREE.Mesh(otherVertexGeometry, otherVertexMaterial);
+    squareVertexB_mesh.visible = false;
+    squareVertexD_mesh.visible = false;
+    scene.add(squareVertexB_mesh, squareVertexD_mesh);
 
 
     const vertexGeometry = new THREE.CircleGeometry(0.015, 24);
@@ -406,35 +406,33 @@
       const d = x / rect.width;
       const a = 1 - (y / rect.height); // Y is inverted in canvas
 
-      const p1 = getPointAt(a);
-      const p2 = getPointAt((a + d) % 1.0);
+      const vertexA = getPointAt(a);
+      const vertexC = getPointAt((a + d) % 1.0);
 
       chordLine.geometry.setFromPoints([
-        new THREE.Vector3(p1.x, p1.y, 0),
-        new THREE.Vector3(p2.x, p2.y, 0)
+        new THREE.Vector3(vertexA.x, vertexA.y, 0),
+        new THREE.Vector3(vertexC.x, vertexC.y, 0)
       ]);
       chordLine.visible = true;
 
       // Calculate and draw the square
-      const centerX = (p1.x + p2.x) / 2;
-      const centerY = (p1.y + p2.y) / 2;
-      const vecX = (p2.x - p1.x) / 2;
-      const vecY = (p2.y - p1.y) / 2;
-      const p3 = new THREE.Vector2(centerX - vecY, centerY + vecX);
-      const p4 = new THREE.Vector2(centerX + vecY, centerY - vecX);
+      const center = new THREE.Vector2((vertexA.x + vertexC.x) / 2, (vertexA.y + vertexC.y) / 2);
+      const halfDiagonal = new THREE.Vector2((vertexC.x - vertexA.x) / 2, (vertexC.y - vertexA.y) / 2);
+      const vertexB = new THREE.Vector2(center.x - halfDiagonal.y, center.y + halfDiagonal.x);
+      const vertexD = new THREE.Vector2(center.x + halfDiagonal.y, center.y - halfDiagonal.x);
 
       squareLine.geometry.setFromPoints([
-        new THREE.Vector3(p1.x, p1.y, 0),
-        new THREE.Vector3(p3.x, p3.y, 0),
-        new THREE.Vector3(p2.x, p2.y, 0),
-        new THREE.Vector3(p4.x, p4.y, 0)
+        new THREE.Vector3(vertexA.x, vertexA.y, 0),
+        new THREE.Vector3(vertexB.x, vertexB.y, 0),
+        new THREE.Vector3(vertexC.x, vertexC.y, 0),
+        new THREE.Vector3(vertexD.x, vertexD.y, 0)
       ]);
       squareLine.visible = true;
 
-      otherVertex1.position.set(p3.x, p3.y, 0);
-      otherVertex2.position.set(p4.x, p4.y, 0);
-      otherVertex1.visible = true;
-      otherVertex2.visible = true;
+      squareVertexB_mesh.position.set(vertexB.x, vertexB.y, 0);
+      squareVertexD_mesh.position.set(vertexD.x, vertexD.y, 0);
+      squareVertexB_mesh.visible = true;
+      squareVertexD_mesh.visible = true;
     });
 
     daCanvas.addEventListener('pointerleave', () => {
@@ -442,8 +440,8 @@
       crosshairY.style.display = 'none';
       chordLine.visible = false;
       squareLine.visible = false;
-      otherVertex1.visible = false;
-      otherVertex2.visible = false;
+      squareVertexB_mesh.visible = false;
+      squareVertexD_mesh.visible = false;
     });
 
     function getPointerPosition(event) {
