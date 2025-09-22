@@ -114,6 +114,15 @@
     camera.position.set(0, 0, 5);
     camera.lookAt(new THREE.Vector3(0, 0, 0));
 
+    // A plane that will fill the screen and host our SDF shader
+    const backgroundPlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1), // It will cover the 0-1 coordinate space
+      null // We'll create the shader material next
+    );
+    backgroundPlane.position.set(0.5, 0.5, -1); // Center it in the 0-1 space, behind everything
+    backgroundPlane.renderOrder = -1; // Ensure it renders first (in the back)
+    scene.add(backgroundPlane);
+
     const polygon = [
       new THREE.Vector2(0.25, 0.25),
       new THREE.Vector2(0.75, 0.25),
@@ -133,6 +142,125 @@
 
     let selectedVertexIndex = null;
     let isDragging = false;
+
+    const MAX_VERTICES = 50; // A hard limit for the shader array
+
+    const vertexShader = `
+      void main() {
+        // We still calculate the signed distance as before
+        float sd = signedDistance_glsl(v_uv, u_polygon, u_vertexCount);
+        
+        vec3 finalColor;
+      
+        // Branch based on whether the point is inside or outside
+        if (sd >= 0.0) {
+          // OUTSIDE: Blend from White (boundary) to Orange (far away)
+          // smoothstep creates a value from 0.0 to 1.0 as sd goes from 0.0 to u_rangeOutside
+          float t = smoothstep(0.0, u_rangeOutside, sd);
+          finalColor = mix(u_colorBoundary, u_colorOutside, t);
+        } else {
+          // INSIDE: Blend from White (boundary) to Deep Blue (deep inside)
+          // We use the absolute value of sd for the gradient
+          float t = smoothstep(0.0, u_rangeInside, -sd);
+          finalColor = mix(u_colorBoundary, u_colorInside, t);
+        }
+        
+        gl_FragColor = vec4(finalColor, 1.0);
+      }
+    `;
+    
+    const fragmentShader = `
+      varying vec2 v_uv;
+      uniform vec2 u_polygon[${MAX_VERTICES}];
+      uniform int u_vertexCount;
+      uniform vec3 u_colorInside;
+      uniform vec3 u_colorOutside;
+      uniform float u_distanceRange;
+    
+      // --- GLSL version of distanceToSegment ---
+      float distanceToSegment(vec2 p, vec2 a, vec2 b) {
+        vec2 ab = b - a;
+        vec2 ap = p - a;
+        float t = clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0);
+        vec2 closest = a + t * ab;
+        return distance(p, closest);
+      }
+      
+      // --- GLSL version of signedDistance ---
+      float signedDistance_glsl(vec2 p, vec2 poly[${MAX_VERTICES}], int count) {
+        float minDst = 1e9; // Large number
+        
+        // 1. Calculate minimum distance to an edge
+        for (int i = 0; i < ${MAX_VERTICES}; ++i) {
+          if (i >= count) break;
+          vec2 p1 = poly[i];
+          vec2 p2 = poly[int(mod(float(i) + 1.0, float(count)))];
+          minDst = min(minDst, distanceToSegment(p, p1, p2));
+        }
+        
+        // 2. Calculate inside/outside for the sign (Ray Casting)
+	const float PI = 3.1415926535;
+        float totalAngle = 0.0;
+        
+        for (int i = 0; i < ${MAX_VERTICES}; ++i) {
+          if (i >= count) break;
+          
+          // Create vectors from the test point to the edge's vertices
+          vec2 p1 = poly[i];
+          vec2 v1 = p1 - p;
+        
+          vec2 p2 = poly[int(mod(float(i) + 1.0, float(count)))];
+          vec2 v2 = p2 - p;
+        
+          // Use atan2 to get the angle of each vector
+          float angle1 = atan(v1.y, v1.x);
+          float angle2 = atan(v2.y, v2.x);
+          
+          // Get the delta and wrap it to the -PI to PI range
+          float deltaAngle = angle2 - angle1;
+          if (deltaAngle > PI) deltaAngle -= 2.0 * PI;
+          if (deltaAngle < -PI) deltaAngle += 2.0 * PI;
+          
+          totalAngle += deltaAngle;
+        }
+        
+        // If the total angle is close to 2*PI or -2*PI, the point is inside.
+        bool isInside = abs(totalAngle) > PI;
+        
+        return isInside ? -minDst : minDst;
+      }
+    
+      void main() {
+        float sd = signedDistance_glsl(v_uv, u_polygon, u_vertexCount);
+        
+        // Normalize the distance to a 0-1 range based on the specified range
+        // This focuses the gradient near the polygon boundary
+        float normalizedDist = sd / u_distanceRange;
+        float t = (normalizedDist + 1.0) / 2.0;
+        t = clamp(t, 0.0, 1.0); // Clamp to the max colors
+        
+        // Mix the two colors based on the clamped, normalized distance
+        vec3 finalColor = mix(u_colorInside, u_colorOutside, t);
+        
+        gl_FragColor = vec4(finalColor, 1.0);
+      }
+    `;
+
+    const shaderMaterial = new THREE.ShaderMaterial({
+    vertexShader,
+    fragmentShader,
+    uniforms: {
+      u_polygon: { value: [] },
+      u_vertexCount: { value: 0 },
+      u_colorInside: { value: new THREE.Color(0x003366) },  // Deep Blue
+      u_colorOutside: { value: new THREE.Color(0xffa500) }, // Orange
+      u_colorBoundary: { value: new THREE.Color(0xffffff) }, // White
+      u_rangeInside: { value: 0.10 }, // New: 10% range for inside
+      u_rangeOutside: { value: 0.20 }, // New: 20% range for outside
+    }
+  });
+
+    backgroundPlane.material = shaderMaterial;
 
     function updateRendererSize() {
       const { width, height } = canvas.parentElement.getBoundingClientRect();
@@ -290,6 +418,58 @@
       return true; // No intersections found
     }
 
+    /**
+     * Determines if a point is inside a polygon using the Ray Casting algorithm.
+     * @param {THREE.Vector2} point The point to test.
+     * @param {THREE.Vector2[]} poly The polygon vertices.
+     * @returns {boolean} True if the point is inside.
+     */
+    function isPointInside(point, poly) {
+      let isInside = false;
+      const n = poly.length;
+      for (let i = 0, j = n - 1; i < n; j = i++) {
+        const p1 = poly[i];
+        const p2 = poly[j];
+    
+        // Check if the point's y-coordinate is between the edge's y-coordinates
+        const intersect = ((p1.y > point.y) !== (p2.y > point.y))
+          // And if the point is to the left of the intersection of the ray and the edge
+          && (point.x < (p2.x - p1.x) * (point.y - p1.y) / (p2.y - p1.y) + p1.x);
+    
+        if (intersect) {
+          isInside = !isInside;
+        }
+      }
+      return isInside;
+    }
+
+    /**
+     * Calculates the signed distance from a point to a polygon.
+     * Distance is negative if the point is inside, positive if outside.
+     * @param {THREE.Vector2} point The point to test.
+     * @param {THREE.Vector2[]} poly The polygon vertices.
+     * @returns {number} The signed distance.
+     */
+    function signedDistance(point, poly) {
+      let minDistance = Infinity;
+      const n = poly.length;
+    
+      // 1. Find the minimum distance to any edge segment
+      for (let i = 0; i < n; i++) {
+        const p1 = poly[i];
+        const p2 = poly[(i + 1) % n];
+        const dist = distanceToSegment(point, p1, p2);
+        if (dist < minDistance) {
+          minDistance = dist;
+        }
+      }
+    
+      // 2. Determine the sign
+      const sign = isPointInside(point, poly) ? -1.0 : 1.0;
+    
+      return minDistance * sign;
+    }
+
     canvas.addEventListener('pointerdown', (event) => {
       canvas.setPointerCapture(event.pointerId);
       const pos = getPointerPosition(event);
@@ -354,6 +534,18 @@
     });
 
     function renderLoop() {
+      // 1. Create a copy of the polygon's Vector2 array.
+      const paddedPolygon = [...polygon];
+      
+      // 2. Pad the array with empty vectors to the max size.
+      while (paddedPolygon.length < MAX_VERTICES) {
+        paddedPolygon.push(new THREE.Vector2(0, 0));
+      }
+      
+      // 3. Update the shader uniforms directly.
+      // Three.js knows how to handle an array of Vector2s for a vec2[] uniform.
+      shaderMaterial.uniforms.u_polygon.value = paddedPolygon;
+      shaderMaterial.uniforms.u_vertexCount.value = polygon.length;
       renderer.render(scene, camera);
     }
 
