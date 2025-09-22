@@ -172,7 +172,6 @@
       </div>
     </div>
     <div class="controls">
-      <button id="delete-vertex">Delete Selected Vertex</button>
       <p class="hint">
         Drag a vertex to move it. Click an edge to create a new vertex.
         Click a vertex and press delete to remove it.
@@ -639,13 +638,19 @@
     canvas.addEventListener('pointerup', endDrag);
     canvas.addEventListener('pointerleave', endDrag);
 
-    document.getElementById('delete-vertex').addEventListener('click', () => {
+    function deleteSelectedVertex() {
       if (selectedVertexIndex === null || polygon.length <= 3) return;
       polygon.splice(selectedVertexIndex, 1);
       scene.remove(vertexMeshes.splice(selectedVertexIndex, 1)[0]);
       selectedVertexIndex = null;
       rebuildVertices();
       updateLineAndPerimeter();
+    }
+
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        deleteSelectedVertex();
+      }
     });
 
     function renderLoop() {
