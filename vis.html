@@ -218,31 +218,85 @@
     const bdFragmentShader = `varying vec2 v_uv; uniform sampler2D u_bd_map; void main() { gl_FragColor = texture2D(u_bd_map, v_uv); }`;
     const bdShaderMaterial = new THREE.ShaderMaterial({ vertexShader: mainVertexShader, fragmentShader: bdFragmentShader, uniforms: { u_bd_map: { value: bdDataTexture } } });
     bdPlane.material = bdShaderMaterial;
-    
-    function updateBdDataTexture() {
-        for (let i = 0; i < bdData.length; i += 4) { bdData[i] = 0; bdData[i + 1] = 0; bdData[i + 2] = 0; bdData[i + 3] = 255; }
-        const samples = 512;
-        for (let d_idx = 0; d_idx < samples; d_idx++) {
-            const d = d_idx / (samples - 1);
-            for (let a_idx = 0; a_idx < samples; a_idx++) {
-                const a = a_idx / (samples - 1);
-                const vA = getPointAt(a); const vC = getPointAt((a + d) % 1.0);
-                const center = new THREE.Vector2((vA.x + vC.x) / 2, (vA.y + vC.y) / 2);
-                const halfDiag = new THREE.Vector2((vC.x - vA.x) / 2, (vC.y - vA.y) / 2);
-                const vB = new THREE.Vector2(center.x - halfDiag.y, center.y + halfDiag.x);
-                const vD = new THREE.Vector2(center.x + halfDiag.y, center.y - halfDiag.x);
-                const sdB = signedDistance(vB, polygon); const sdD = signedDistance(vD, polygon);
-                const normX = sdB / bdErrorRange; const normY = sdD / bdErrorRange;
-                if (Math.abs(normX) <= 1 && Math.abs(normY) <= 1) {
-                    const px = Math.floor((normX * 0.5 + 0.5) * (bdTextureSize - 1));
-                    const py = Math.floor((normY * 0.5 + 0.5) * (bdTextureSize - 1));
-                    const idx = (py * bdTextureSize + px) * 4;
-                    bdData[idx] = 102; bdData[idx + 1] = 102; bdData[idx + 2] = 102; // 0.4 * 255
-                }
-            }
-        }
-        bdDataTexture.needsUpdate = true;
+
+function updateBdDataTexture() {
+  // 1) build a hit histogram (sum of all green curves)
+  const w = bdTextureSize;
+  const h = bdTextureSize;
+  const counts = new Uint32Array(w * h);
+
+  // clear target texture buffer
+  for (let i = 0; i < bdData.length; i += 4) {
+    bdData[i] = 0;
+    bdData[i + 1] = 0;
+    bdData[i + 2] = 0;
+    bdData[i + 3] = 255;
+  }
+
+  const samples = 512;
+  for (let d_idx = 0; d_idx < samples; d_idx++) {
+    const d = d_idx / (samples - 1);
+    for (let a_idx = 0; a_idx < samples; a_idx++) {
+      const a = a_idx / (samples - 1);
+
+      const vA = getPointAt(a);
+      const vC = getPointAt((a + d) % 1.0);
+
+      const center = new THREE.Vector2(
+        (vA.x + vC.x) / 2,
+        (vA.y + vC.y) / 2
+      );
+      const halfDiag = new THREE.Vector2(
+        (vC.x - vA.x) / 2,
+        (vC.y - vA.y) / 2
+      );
+
+      const vB = new THREE.Vector2(
+        center.x - halfDiag.y,
+        center.y + halfDiag.x
+      );
+      const vD = new THREE.Vector2(
+        center.x + halfDiag.y,
+        center.y - halfDiag.x
+      );
+
+      const sdB = signedDistance(vB, polygon);
+      const sdD = signedDistance(vD, polygon);
+
+      const normX = sdB / bdErrorRange;
+      const normY = sdD / bdErrorRange;
+
+      if (Math.abs(normX) <= 1 && Math.abs(normY) <= 1) {
+        const px = Math.floor((normX * 0.5 + 0.5) * (w - 1));
+        const py = Math.floor((normY * 0.5 + 0.5) * (h - 1));
+        counts[py * w + px] += 1;
+      }
     }
+  }
+
+  // 2) normalize histogram to grayscale for the DataTexture
+  let maxCount = 0;
+  for (let i = 0; i < counts.length; i++) {
+    if (counts[i] > maxCount) maxCount = counts[i];
+  }
+
+  if (maxCount > 0) {
+    for (let i = 0; i < counts.length; i++) {
+      // sqrt for better contrast on sparse data
+      const v = Math.floor(
+        255 * Math.sqrt(counts[i] / maxCount)
+      );
+      const idx = i * 4;
+      bdData[idx] = v;
+      bdData[idx + 1] = v;
+      bdData[idx + 2] = v;
+      // alpha already set to 255
+    }
+  }
+
+  bdDataTexture.needsUpdate = true;
+}
+
 
     function updateBdErrorRange() {
         let maxAbsError = 0.0; const samples = 50; 
