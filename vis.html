@@ -297,6 +297,77 @@ function updateBdDataTexture() {
   bdDataTexture.needsUpdate = true;
 }
 
+          // New: mark every pixel that is ever on any green path as a flat grey.
+// No density, no normalization. Pure union of all (d, a) curves.
+function buildBdOccupancyTexture() {
+  const w = bdTextureSize;
+  const h = bdTextureSize;
+
+  // clear texture to black, keep alpha opaque
+  for (let i = 0; i < bdData.length; i += 4) {
+    bdData[i + 0] = 0;
+    bdData[i + 1] = 0;
+    bdData[i + 2] = 0;
+    bdData[i + 3] = 255;
+  }
+
+  const samples = 512;          // same resolution as before
+  const grey = 192;             // flat grey for any visited pixel
+
+  for (let d_idx = 0; d_idx < samples; d_idx++) {
+    const d = d_idx / (samples - 1);
+
+    for (let a_idx = 0; a_idx < samples; a_idx++) {
+      const a = a_idx / (samples - 1);
+
+      const vA = getPointAt(a);
+      const vC = getPointAt((a + d) % 1.0);
+
+      const center = new THREE.Vector2(
+        (vA.x + vC.x) / 2,
+        (vA.y + vC.y) / 2
+      );
+      const halfDiag = new THREE.Vector2(
+        (vC.x - vA.x) / 2,
+        (vC.y - vA.y) / 2
+      );
+
+      const vB = new THREE.Vector2(
+        center.x - halfDiag.y,
+        center.y + halfDiag.x
+      );
+      const vD = new THREE.Vector2(
+        center.x + halfDiag.y,
+        center.y - halfDiag.x
+      );
+
+      const sdB = signedDistance(vB, polygon);
+      const sdD = signedDistance(vD, polygon);
+
+      const normX = sdB / bdErrorRange; // expected in [-1, 1]
+      const normY = sdD / bdErrorRange; // expected in [-1, 1]
+
+      if (Math.abs(normX) <= 1 && Math.abs(normY) <= 1) {
+        let px = Math.floor((normX * 0.5 + 0.5) * (w - 1));
+        let py = Math.floor((normY * 0.5 + 0.5) * (h - 1));
+
+        // clamp for safety
+        if (px < 0) px = 0; else if (px >= w) px = w - 1;
+        if (py < 0) py = 0; else if (py >= h) py = h - 1;
+
+        const idx = (py * w + px) * 4;
+        bdData[idx + 0] = grey;
+        bdData[idx + 1] = grey;
+        bdData[idx + 2] = grey;
+        // alpha stays 255
+      }
+    }
+  }
+
+  bdDataTexture.needsUpdate = true;
+}
+
+
 
     function updateBdErrorRange() {
         let maxAbsError = 0.0; const samples = 50; 
@@ -316,7 +387,8 @@ function updateBdDataTexture() {
         bdCamera.left = -bdErrorRange; bdCamera.right = bdErrorRange;
         bdCamera.top = bdErrorRange; bdCamera.bottom = -bdErrorRange;
         bdCamera.updateProjectionMatrix();
-        updateBdDataTexture();
+        // updateBdDataTexture();
+        buildBdOccupancyTexture();
     }
 
     function drawBdOverlay(d, current_sdB, current_sdD) {
