@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -338,68 +338,6 @@
     );
     bdScene.add(bdPlane);
     const bdOverlayCtx = bdOverlayCanvas.getContext('2d');
-<<<<<<< HEAD
-    let bdErrorRange = 0.1;
-    const bdTextureSize = 256;
-    const bdData = new Uint8Array(bdTextureSize * bdTextureSize * 4);
-    const bdDataTexture = new THREE.DataTexture(bdData, bdTextureSize, bdTextureSize, THREE.RGBAFormat, THREE.UnsignedByteType);
-    const bdFragmentShader = `varying vec2 v_uv; uniform sampler2D u_bd_map; void main() { gl_FragColor = texture2D(u_bd_map, v_uv); }`;
-    const bdShaderMaterial = new THREE.ShaderMaterial({ vertexShader: mainVertexShader, fragmentShader: bdFragmentShader, uniforms: { u_bd_map: { value: bdDataTexture } } });
-    bdPlane.material = bdShaderMaterial;
-
-function updateBdDataTexture() {
-  // 1) build a hit histogram (sum of all green curves)
-  const w = bdTextureSize;
-  const h = bdTextureSize;
-  const counts = new Uint32Array(w * h);
-
-  // clear target texture buffer
-  for (let i = 0; i < bdData.length; i += 4) {
-    bdData[i] = 0;
-    bdData[i + 1] = 0;
-    bdData[i + 2] = 0;
-    bdData[i + 3] = 255;
-  }
-
-  const samples = 512;
-  for (let d_idx = 0; d_idx < samples; d_idx++) {
-    const d = d_idx / (samples - 1);
-    for (let a_idx = 0; a_idx < samples; a_idx++) {
-      const a = a_idx / (samples - 1);
-
-      const vA = getPointAt(a);
-      const vC = getPointAt((a + d) % 1.0);
-
-      const center = new THREE.Vector2(
-        (vA.x + vC.x) / 2,
-        (vA.y + vC.y) / 2
-      );
-      const halfDiag = new THREE.Vector2(
-        (vC.x - vA.x) / 2,
-        (vC.y - vA.y) / 2
-      );
-
-      const vB = new THREE.Vector2(
-        center.x - halfDiag.y,
-        center.y + halfDiag.x
-      );
-      const vD = new THREE.Vector2(
-        center.x + halfDiag.y,
-        center.y - halfDiag.x
-      );
-
-      const sdB = signedDistance(vB, polygon);
-      const sdD = signedDistance(vD, polygon);
-
-      const normX = sdB / bdErrorRange;
-      const normY = sdD / bdErrorRange;
-
-      if (Math.abs(normX) <= 1 && Math.abs(normY) <= 1) {
-        const px = Math.floor((normX * 0.5 + 0.5) * (w - 1));
-        const py = Math.floor((normY * 0.5 + 0.5) * (h - 1));
-        counts[py * w + px] += 1;
-      }
-=======
     
     const bdMapVertexShader = `
         attribute vec2 ad;
@@ -407,6 +345,7 @@ function updateBdDataTexture() {
         uniform int u_vertexCount;
         uniform float u_segmentLengths[${MAX_VERTICES}];
         uniform float u_totalPerimeter;
+        uniform float u_pointSize;
         ${commonGlslFunctions}
         void main() {
             float d = ad.x;
@@ -421,13 +360,22 @@ function updateBdDataTexture() {
             vec2 vD = center + vec2(halfDiag.y, -halfDiag.x);
             float sdB = signedDistance_glsl(vB, u_polygon, u_vertexCount);
             float sdD = signedDistance_glsl(vD, u_polygon, u_vertexCount);
-            gl_PointSize = 1.0;
+            gl_PointSize = u_pointSize;
             gl_Position = projectionMatrix * modelViewMatrix *
                 vec4(sdB, sdD, 0.0, 1.0);
         }`;
     const bdMapFragmentShader = `
+        precision mediump float;
+        uniform float u_pointWeight;
         void main() {
-            gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+            // map to [-1,1]^2, radius 0 at center → 1 at edge
+            vec2 p = gl_PointCoord * 2.0 - 1.0;
+            float r = length(p);
+            // soft disc: smooth edge; value ~1 in center, 0 at r>=1
+            float w = smoothstep(1.0, 0.0, r);
+            // scale contribution; additive blend will accumulate these
+            w *= u_pointWeight;
+            gl_FragColor = vec4(vec3(w), w);
         }`;
 
     const samples = 1024;
@@ -452,13 +400,16 @@ function updateBdDataTexture() {
             u_polygon: { value: makeVec2Array(MAX_VERTICES) },
             u_vertexCount: { value: 0 },
             u_segmentLengths: { value: makeFloatArray(MAX_VERTICES) },
-            u_totalPerimeter: { value: 0 }
+            u_totalPerimeter: { value: 0 },
+            u_pointSize: { value: 3.0 },
+            u_pointWeight: { value: 0.06 }
         },
         vertexShader: bdMapVertexShader,
         fragmentShader: bdMapFragmentShader,
-        blending: THREE.NormalBlending,
+        blending: THREE.AdditiveBlending,
         depthTest: false,
-        transparent: false
+        depthWrite: false,
+        transparent: true
     });
     bdMapMaterial.opacity = 0.05;
     const bdPoints = new THREE.Points(bdPointGeometry, bdMapMaterial);
@@ -491,104 +442,7 @@ function updateBdDataTexture() {
 
         const bounds = computeBdBounds(128);
         autoFrameBD(bounds);
->>>>>>> cb1793b (big improvements)
     }
-  }
-
-  // 2) normalize histogram to grayscale for the DataTexture
-  let maxCount = 0;
-  for (let i = 0; i < counts.length; i++) {
-    if (counts[i] > maxCount) maxCount = counts[i];
-  }
-
-  if (maxCount > 0) {
-    for (let i = 0; i < counts.length; i++) {
-      // sqrt for better contrast on sparse data
-      const v = Math.floor(
-        255 * Math.sqrt(counts[i] / maxCount)
-      );
-      const idx = i * 4;
-      bdData[idx] = v;
-      bdData[idx + 1] = v;
-      bdData[idx + 2] = v;
-      // alpha already set to 255
-    }
-  }
-
-  bdDataTexture.needsUpdate = true;
-}
-
-          // New: mark every pixel that is ever on any green path as a flat grey.
-// No density, no normalization. Pure union of all (d, a) curves.
-function buildBdOccupancyTexture() {
-  const w = bdTextureSize;
-  const h = bdTextureSize;
-
-  // clear texture to black, keep alpha opaque
-  for (let i = 0; i < bdData.length; i += 4) {
-    bdData[i + 0] = 0;
-    bdData[i + 1] = 0;
-    bdData[i + 2] = 0;
-    bdData[i + 3] = 255;
-  }
-
-  const samples = 512;          // same resolution as before
-  const grey = 192;             // flat grey for any visited pixel
-
-  for (let d_idx = 0; d_idx < samples; d_idx++) {
-    const d = d_idx / (samples - 1);
-
-    for (let a_idx = 0; a_idx < samples; a_idx++) {
-      const a = a_idx / (samples - 1);
-
-      const vA = getPointAt(a);
-      const vC = getPointAt((a + d) % 1.0);
-
-      const center = new THREE.Vector2(
-        (vA.x + vC.x) / 2,
-        (vA.y + vC.y) / 2
-      );
-      const halfDiag = new THREE.Vector2(
-        (vC.x - vA.x) / 2,
-        (vC.y - vA.y) / 2
-      );
-
-      const vB = new THREE.Vector2(
-        center.x - halfDiag.y,
-        center.y + halfDiag.x
-      );
-      const vD = new THREE.Vector2(
-        center.x + halfDiag.y,
-        center.y - halfDiag.x
-      );
-
-      const sdB = signedDistance(vB, polygon);
-      const sdD = signedDistance(vD, polygon);
-
-      const normX = sdB / bdErrorRange; // expected in [-1, 1]
-      const normY = sdD / bdErrorRange; // expected in [-1, 1]
-
-      if (Math.abs(normX) <= 1 && Math.abs(normY) <= 1) {
-        let px = Math.floor((normX * 0.5 + 0.5) * (w - 1));
-        let py = Math.floor((normY * 0.5 + 0.5) * (h - 1));
-
-        // clamp for safety
-        if (px < 0) px = 0; else if (px >= w) px = w - 1;
-        if (py < 0) py = 0; else if (py >= h) py = h - 1;
-
-        const idx = (py * w + px) * 4;
-        bdData[idx + 0] = grey;
-        bdData[idx + 1] = grey;
-        bdData[idx + 2] = grey;
-        // alpha stays 255
-      }
-    }
-  }
-
-  bdDataTexture.needsUpdate = true;
-}
-
-
 
     function computeBdBounds(sampleN = 128) {
         let minB = Infinity, maxB = -Infinity, minD = Infinity, maxD = -Infinity;
@@ -621,12 +475,7 @@ function buildBdOccupancyTexture() {
         bdCamera.zoom = Math.max(0.1, viewSpan / targetSpan);
         bdCamera.position.set(0, 0, bdCamera.position.z);
         bdCamera.updateProjectionMatrix();
-<<<<<<< HEAD
-        // updateBdDataTexture();
-        buildBdOccupancyTexture();
-=======
         drawBdOverlay(null);
->>>>>>> cb1793b (big improvements)
     }
     
     function drawBdOverlay(d, current_sdB, current_sdD) {
