@@ -181,6 +181,9 @@
                 vec4(position, 1.0);
         }`;
     const commonGlslFunctions = `
+      float hypot(float x, float y) {
+          return sqrt(x * x + y * y);
+      }
       float distanceToSegment(vec2 p, vec2 a, vec2 b) {
           vec2 ab = b - a;
           vec2 ap = p - a;
@@ -293,7 +296,9 @@
           vec2 vD = center + vec2(halfDiag.y, -halfDiag.x);
           float sdB = signedDistance_glsl(vB, u_polygon, u_vertexCount);
           float sdD = signedDistance_glsl(vD, u_polygon, u_vertexCount);
-          float error = sdB * sdB + sdD * sdD;
+          float ac = hypot(vA.x - vC.x, vA.y - vC.y);
+          float nsdB = sdB / ac, nsdD = sdD / ac;
+          float error = nsdB * nsdB + nsdD * nsdD;
           float maxError = 0.1 * 0.1;
           float t = clamp(error / maxError, 0.0, 1.0);
           gl_FragColor = vec4(vec3(1.0 - t), 1.0);
@@ -356,13 +361,15 @@
                                      u_segmentLengths, u_totalPerimeter);
             vec2 center = (vA + vC) / 2.0;
             vec2 halfDiag = (vC - vA) / 2.0;
+            float ac = hypot(vA.x - vC.x, vA.y - vC.y);
             vec2 vB = center + vec2(-halfDiag.y, halfDiag.x);
             vec2 vD = center + vec2(halfDiag.y, -halfDiag.x);
             float sdB = signedDistance_glsl(vB, u_polygon, u_vertexCount);
             float sdD = signedDistance_glsl(vD, u_polygon, u_vertexCount);
+            float nsdB = sdB / ac, nsdD = sdD / ac;
             gl_PointSize = u_pointSize;
             gl_Position = projectionMatrix * modelViewMatrix *
-                vec4(sdB, sdD, 0.0, 1.0);
+                vec4(nsdB, nsdD, 0.0, 1.0);
         }`;
     const bdMapFragmentShader = `
         precision mediump float;
@@ -447,17 +454,18 @@
     function computeBdBounds(sampleN = 128) {
         let minB = Infinity, maxB = -Infinity, minD = Infinity, maxD = -Infinity;
         for (let i = 0; i < sampleN; i++) {
-            const d = i / (sampleN - 1);
+            const d = (i + 1) / (sampleN + 1);
             for (let j = 0; j < sampleN; j++) {
                 const a = j / (sampleN - 1);
                 const vA = getPointAt(a - d / 2.0);
                 const vC = getPointAt(a + d / 2.0);
                 const center = new THREE.Vector2((vA.x + vC.x) / 2, (vA.y + vC.y) / 2);
                 const halfD  = new THREE.Vector2((vC.x - vA.x) / 2, (vC.y - vA.y) / 2);
+                const ac = Math.hypot(vA.x - vC.x, vA.y - vC.y);
                 const vB = new THREE.Vector2(center.x - halfD.y, center.y + halfD.x);
                 const vD = new THREE.Vector2(center.x + halfD.y, center.y - halfD.x);
-                const sdB = signedDistance(vB, polygon);
-                const sdD = signedDistance(vD, polygon);
+                const sdB = signedDistance(vB, polygon) / ac;
+                const sdD = signedDistance(vD, polygon) / ac;
                 if (sdB < minB) minB = sdB; if (sdB > maxB) maxB = sdB;
                 if (sdD < minD) minD = sdD; if (sdD > maxD) maxD = sdD;
             }
@@ -479,6 +487,7 @@
     }
     
     function drawBdOverlay(d, current_sdB, current_sdD) {
+        if (d == 0) d = 1e-5;
         const w = bdOverlayCanvas.width;
         const h = bdOverlayCanvas.height;
         const halfW = 0.5 * (bdCamera.right - bdCamera.left) / bdCamera.zoom;
@@ -506,6 +515,7 @@
             const a = i / loopSamples;
             const vA = getPointAt(a - d / 2);
             const vC = getPointAt(a + d / 2);
+            const ac = Math.hypot(vA.x - vC.x, vA.y - vC.y);
             const center = new THREE.Vector2((vA.x + vC.x) / 2,
                                              (vA.y + vC.y) / 2);
             const halfD = new THREE.Vector2((vC.x - vA.x) / 2,
@@ -514,8 +524,8 @@
                                          center.y + halfD.x);
             const vD = new THREE.Vector2(center.x + halfD.y,
                                          center.y - halfD.x);
-            const sdB = signedDistance(vB, polygon);
-            const sdD = signedDistance(vD, polygon);
+            const sdB = signedDistance(vB, polygon) / ac;
+            const sdD = signedDistance(vD, polygon) / ac;
             const px = ((sdB - left) / (right - left)) * w;
             const py = (1 - ((sdD - bottom) / (top - bottom))) * h;
             if (i === 0) bdOverlayCtx.moveTo(px, py);
@@ -616,7 +626,7 @@
       const rect = daCanvas.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
-      const d = x / rect.width;
+      const d = 1 + x / (rect.width + 1);
       const a = 1 - (y / rect.height);
       crosshairDaX.style.display = 'block';
       crosshairDaY.style.display = 'block';
@@ -624,6 +634,7 @@
       crosshairDaY.style.top = `${y}px`;
       const vA = getPointAt(a - d / 2);
       const vC = getPointAt(a + d / 2);
+      const ac = Math.hypot(vA.x - vC.x, vA.y - vC.y);
       chordLine.geometry.setFromPoints(
           [new THREE.Vector3(vA.x, vA.y, 0), new THREE.Vector3(vC.x, vC.y, 0)]
       );
@@ -641,8 +652,8 @@
       sqVtxD.position.set(vD.x, vD.y, 0);
       sqVtxB.visible = true;
       sqVtxD.visible = true;
-      drawBdOverlay(d, signedDistance(vB, polygon),
-                    signedDistance(vD, polygon));
+      drawBdOverlay(d, signedDistance(vB, polygon) / ac,
+                    signedDistance(vD, polygon) / ac);
     }
     daCanvas.addEventListener('pointermove', handleDAHover);
     daCanvas.addEventListener('pointercenter', handleDAHover);
