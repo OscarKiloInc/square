@@ -290,13 +290,13 @@
                                    u_segmentLengths, u_totalPerimeter);
           vec2 vC = getPointAt_glsl(a + d / 2.0, u_polygon, u_vertexCount,
                                    u_segmentLengths, u_totalPerimeter);
+          float ac = max(1e-7, hypot(vA.x - vC.x, vA.y - vC.y));
           vec2 center = (vA + vC) / 2.0;
           vec2 halfDiag = (vC - vA) / 2.0;
           vec2 vB = center + vec2(-halfDiag.y, halfDiag.x);
           vec2 vD = center + vec2(halfDiag.y, -halfDiag.x);
           float sdB = signedDistance_glsl(vB, u_polygon, u_vertexCount);
           float sdD = signedDistance_glsl(vD, u_polygon, u_vertexCount);
-          float ac = hypot(vA.x - vC.x, vA.y - vC.y);
           float nsdB = sdB / ac, nsdD = sdD / ac;
           float error = nsdB * nsdB + nsdD * nsdD;
           float maxError = 0.1 * 0.1;
@@ -361,7 +361,7 @@
                                      u_segmentLengths, u_totalPerimeter);
             vec2 center = (vA + vC) / 2.0;
             vec2 halfDiag = (vC - vA) / 2.0;
-            float ac = hypot(vA.x - vC.x, vA.y - vC.y);
+            float ac = max(1e-7, hypot(vA.x - vC.x, vA.y - vC.y));
             vec2 vB = center + vec2(-halfDiag.y, halfDiag.x);
             vec2 vD = center + vec2(halfDiag.y, -halfDiag.x);
             float sdB = signedDistance_glsl(vB, u_polygon, u_vertexCount);
@@ -375,7 +375,7 @@
         precision mediump float;
         uniform float u_pointWeight;
         void main() {
-            // map to [-1,1]^2, radius 0 at center → 1 at edge
+            // map to [-1,1]^2, radius 0 at center ΓåÆ 1 at edge
             vec2 p = gl_PointCoord * 2.0 - 1.0;
             float r = length(p);
             // soft disc: smooth edge; value ~1 in center, 0 at r>=1
@@ -474,11 +474,11 @@
     }
 
     function autoFrameBD(bounds) {
-        const padEachSide = 0.05;              // 5% per side → 10% total
+        const padEachSide = 0.05;              // 5% per side ΓåÆ 10% total
         const w = 2*Math.max(Math.abs(bounds.minB), Math.abs(bounds.maxB));
         const h = 2*Math.max(Math.abs(bounds.minD), Math.abs(bounds.maxD));
         const size = Math.max(w, h) || 1;      // avoid div-by-zero
-        const targetSpan = size * (1 + 2 * padEachSide); // ≈ 1.10 * size
+        const targetSpan = size * (1 + 2 * padEachSide); // Γëê 1.10 * size
         const viewSpan = (bdCamera.right - bdCamera.left); // = 3
         bdCamera.zoom = Math.max(0.1, viewSpan / targetSpan);
         bdCamera.position.set(0, 0, bdCamera.position.z);
@@ -626,7 +626,7 @@
       const rect = daCanvas.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
-      const d = 1 + x / (rect.width + 1);
+      const d = Math.min(1.0 - 1e-7, Math.max(1e-7, x / rect.width));w
       const a = 1 - (y / rect.height);
       crosshairDaX.style.display = 'block';
       crosshairDaY.style.display = 'block';
