@@ -626,7 +626,7 @@
       const rect = daCanvas.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
-      const d = Math.min(1.0 - 1e-7, Math.max(1e-7, x / rect.width));w
+      const d = Math.min(1.0 - 1e-7, Math.max(1e-7, x / rect.width));
       const a = 1 - (y / rect.height);
       crosshairDaX.style.display = 'block';
       crosshairDaY.style.display = 'block';
